@@ -1,49 +1,57 @@
-// dllmain.cpp : Defines the entry point for the DLL application.
 #include <iostream>
 #include <windows.h>
 #include <tlhelp32.h>
+#include <map>
+
+std::wstring mainModuleName = L"victim.exe";
+std::map<std::wstring, uintptr_t> moduleAddresses;
 
 void _main();
-void *getBaseAddr();
-
-char moduleName[] = "victim.exe";
+void getModuleAddresses();
 
 BOOL APIENTRY DllMain(HINSTANCE hInst, DWORD reason, LPVOID reserved) {
     if (reason == DLL_PROCESS_ATTACH) _main();
 
-	return TRUE;
+	return 1;
 }
 
+// GetModuleHandleA
+// GetProcAddress
+
 void _main() {
-    void *baseAddr = getBaseAddr();
-    if (baseAddr == NULL) {
-        std::cerr << "failed to find base address :(\n";
+    getModuleAddresses();
+
+    for (const auto& [key, _] : moduleAddresses) std::wcout << key << "\n";
+
+    if (moduleAddresses.count(mainModuleName) == 0) {
+        std::cerr << "failed to find base address\n";
         return;
     }
 
-    void *bufAddr = baseAddr + 0x3000;
+    uintptr_t baseAddr = moduleAddresses[mainModuleName];
+    uintptr_t bufAddr = baseAddr + 0x3000;
 
     char string[] = "hello, world!\n";
-    memcpy(bufAddr, &string, sizeof(string));
+    memcpy((void*)bufAddr, &string, sizeof(string));
 }
 
-void *getBaseAddr() {
-    MODULEENTRY32 moduleEntry = {};
-    moduleEntry.dwSize = sizeof(MODULEENTRY32);
+void getModuleAddresses() {
+    MODULEENTRY32W moduleEntry = {};
+    moduleEntry.dwSize = sizeof(MODULEENTRY32W);
 
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, 0);
-    if (!snapshot) return NULL;
+    if (!snapshot) return;
 
-    BOOL succ = Module32First(snapshot, &moduleEntry);
+    if (!Module32FirstW(snapshot, &moduleEntry)) {
+        CloseHandle(snapshot);
+        return;
+    };
 
-    while (succ) {
-        if (!strcmp((char*)moduleEntry.szModule, moduleName)) {
-            CloseHandle(snapshot);
-            return (void*)moduleEntry.modBaseAddr;
-        }
-        succ = Module32Next(snapshot, &moduleEntry);
-    }
+    do {
+        std::wstring currModuleName(moduleEntry.szModule);
+        moduleAddresses[currModuleName] = (uintptr_t)moduleEntry.modBaseAddr;
+    } while (Module32NextW(snapshot, &moduleEntry));
 
     CloseHandle(snapshot);
-    return NULL;
+    return;
 }
